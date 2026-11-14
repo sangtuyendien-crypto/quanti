@@ -1954,6 +1954,33 @@ class Database:
             for r in rows
         ]
 
+    def list_unsubmitted_pending_buys(self) -> list[dict]:
+        """List all local queued BUY orders not yet submitted to the venue."""
+        rows = self.conn.execute(
+            """
+            SELECT order_id, code, direction, quantity, status,
+                   entry_strategy, created_at
+            FROM orders
+            WHERE status = 'pending'
+              AND LOWER(TRIM(direction)) = 'buy'
+              AND COALESCE(entry_strategy, '') = ''
+            ORDER BY created_at ASC
+            """
+        ).fetchall()
+
+        return [
+            {
+                "order_id": r[0],
+                "code": r[1],
+                "direction": r[2],
+                "quantity": r[3],
+                "status": r[4],
+                "entry_strategy": r[5] or "",
+                "created_at": r[6],
+            }
+            for r in rows
+        ]
+
     def stop_loss_exit_dates(self, since: date) -> list[date]:
         """Fill dates of stop-loss exits since `since`, for StoplossGuard.
 
