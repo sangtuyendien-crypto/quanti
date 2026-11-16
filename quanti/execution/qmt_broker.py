@@ -93,6 +93,9 @@ class QmtBroker:
     ) -> None:
         self._db = db
         self._provider = provider
+        # Serialize live BUY submission and kill-switch cancellation.
+        import threading
+        self._order_lock = threading.RLock()
         self._client: BridgeClient = client or HttpBridgeClient(bridge_url)
         self._initial_cash = initial_cash
         # When True (real money), a silent mock fallback must read as NOT
