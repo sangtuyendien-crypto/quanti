@@ -404,6 +404,20 @@ class QmtBroker:
 
     def _send_now(self, signal: Signal, strategy_name: str,
                   queued_order_id: str | None = None) -> tuple[bool, str, str]:
+        """Serialize BUY submissions with the kill switch."""
+        if signal.direction == Direction.BUY:
+            with self._order_lock:
+                return self._send_now_locked(
+                    signal, strategy_name, queued_order_id
+                )
+
+        # SELL exits must remain available during a kill switch.
+        return self._send_now_locked(
+            signal, strategy_name, queued_order_id
+        )
+
+    def _send_now_locked(self, signal: Signal, strategy_name: str,
+                         queued_order_id: str | None = None) -> tuple[bool, str, str]:
         """Risk-check → size → submit. Returns (landed, status, reason) with
         status in {'filled','pending','rejected'}.
 
