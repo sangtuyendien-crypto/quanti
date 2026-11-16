@@ -1079,11 +1079,11 @@ class QmtBroker:
         if not self._risk.check_portfolio_stop(total, peak):
             return False
         self.cancel_all_pending()
-        self.flatten("组合回撤熔断")
+        acted = self.flatten("组合回撤熔断")
         dd = (total - peak) / peak if peak else 0.0
         self._db.log_decision(
             "portfolio_stop",
-            f"组合回撤熔断(实盘)：净值 {total:,.0f} 自峰值 {peak:,.0f} 回撤 {dd:.1%}，已清仓",
+            f"组合回撤熔断(实盘)：净值 {total:,.0f} 自峰值 {peak:,.0f} 回撤 {dd:.1%}，已触发清仓流程，卖单提交数量 {acted}，成交情况待核实",
             details={"venue": "qmt", "total_value": total, "peak_value": peak,
                      "drawdown": dd,
                      "limit": self._risk.config.portfolio_stop_loss_pct})
