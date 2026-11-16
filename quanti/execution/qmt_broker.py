@@ -966,50 +966,61 @@ class QmtBroker:
 
     
     def cancel_all_pending(self) -> int:
-        """Kill switch: cancel local queued BUYs and open venue orders."""
+        """Kill switch: disarm BUYs, then cancel queued and venue orders."""
         n = 0
         errors = []
 
-        # 1. Cancel local BUY orders that have not been submitted.
+        # 1. Disarm live BUYs BEFORE acquiring the order lock.
+        # This prevents new BUY submissions from passing the arm check.
         try:
-            local_orders = self._db.list_unsubmitted_pending_buys()
-            for order in local_orders:
-                self._db.update_order_status(
-                    order["order_id"],
-                    "cancelled",
-                    reason="急停：取消尚未提交的本地隔夜买单",
-                )
-                n += 1
+            self._db.set_live_orders_armed(False)
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"local queued orders: {exc}")
+            errors.append(f"failed to disarm live BUYs: {exc}")
 
-        # 2. Cancel open orders at the broker.
-        try:
-            payload = self._client.get("/trader/orders")
-            if not isinstance(payload, dict) or not isinstance(
-                payload.get("orders"), list
-            ):
-                raise RuntimeError("券商订单接口返回格式异常")
+        # 2. Wait for any in-flight BUY submission to finish.
+        # Then cancel local queued BUYs and open venue orders.
+        with self._order_lock:
 
-            for order in payload["orders"]:
-                if order.get("status") not in ("pending", "accepted"):
-                    continue
+            # Cancel local BUY orders that have not been submitted.
+            try:
+                local_orders = self._db.list_unsubmitted_pending_buys()
+                for order in local_orders:
+                    self._db.update_order_status(
+                        order["order_id"],
+                        "cancelled",
+                        reason="急停：取消尚未提交的本地隔夜买单",
+                    )
+                    n += 1
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"local queued orders: {exc}")
 
-                venue_id = order.get("order_id")
-                if not venue_id:
-                    errors.append("券商订单缺少 order_id")
-                    continue
+            # Cancel open orders at the broker.
+            try:
+                payload = self._client.get("/trader/orders")
+                if not isinstance(payload, dict) or not isinstance(
+                    payload.get("orders"), list
+                ):
+                    raise RuntimeError("券商订单接口返回格式异常")
 
-                try:
-                    if self.cancel_order(venue_id):
-                        n += 1
-                    else:
-                        errors.append(f"券商撤单失败：{venue_id}")
-                except Exception as exc:  # noqa: BLE001
-                    errors.append(f"券商撤单异常 {venue_id}: {exc}")
+                for order in payload["orders"]:
+                    if order.get("status") not in ("pending", "accepted"):
+                        continue
 
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"券商订单查询失败: {exc}")
+                    venue_id = order.get("order_id")
+                    if not venue_id:
+                        errors.append("券商订单缺少 order_id")
+                        continue
+
+                    try:
+                        if self.cancel_order(venue_id):
+                            n += 1
+                        else:
+                            errors.append(f"券商撤单失败：{venue_id}")
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"券商撤单异常 {venue_id}: {exc}")
+
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"券商订单查询失败: {exc}")
 
         # 3. Record the complete result.
         self._db.log_decision(
@@ -1024,7 +1035,6 @@ class QmtBroker:
         )
 
         return n
-
 
     def flatten(self, reason: str = "kill-switch") -> int:
         """Kill switch step 2: submit SELL for every sellable holding.
